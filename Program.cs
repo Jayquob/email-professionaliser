@@ -1,10 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
+using OpenAI;
 using OpenAI.Chat;
+using System.ClientModel;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Allow the frontend UI to talk to this API later
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -14,42 +15,52 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 app.UseCors();
 
-// 2. Set up the OpenAI Client
-string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new Exception("Missing OPENAI_API_KEY environment variable");
-ChatClient aiClient = new("gpt-4o-mini", apiKey);
-
-// 3. Create the endpoint that receives the email
+string apiKey = Environment.GetEnvironmentVariable("GROQ_API_KEY") ?? throw new Exception("Missing GROQ_API_KEY environment variable");
+OpenAIClientOptions options = new OpenAIClientOptions { Endpoint = new Uri("https://api.groq.com/openai/v1/") };
+ChatClient aiClient = new("openai/gpt-oss-20b", new ApiKeyCredential(apiKey), options);
 app.MapPost("/api/analyze", async ([FromBody] EmailRequest request) =>
 {
-    var systemPrompt = @"You are a professional communication editor. 
-Analyze the user's email. Identify informal, aggressive, or passive-aggressive phrases.
-Return ONLY a JSON array of objects with 'originalPhrase', 'suggestedPhrase', and 'reason'. 
-Do not include markdown blocks like ```json.";
-
-    var messages = new List<ChatMessage>
-    {
-        new SystemChatMessage(systemPrompt),
-        new UserChatMessage(request.EmailText)
-    };
-
-    var response = await aiClient.CompleteChatAsync(messages);
-    var rawJson = response.Value.Content[0].Text;
-
     try
     {
-        // Parse the JSON string so our API returns a clean JSON array
+        var systemPrompt = @"You are a professional communication editor. 
+Analyze the user's email. Identify informal, aggressive, or passive-aggressive phrases.
+Return ONLY a JSON array of objects with 'originalPhrase', 'suggestedPhrase', and 'reason'.";
+
+        var messages = new List<ChatMessage>
+        {
+            new SystemChatMessage(systemPrompt),
+            new UserChatMessage(request.EmailText)
+        };
+
+        // 1. Send to Groq
+        var response = await aiClient.CompleteChatAsync(messages);
+        var rawJson = response.Value.Content[0].Text.Trim();
+
+        Console.WriteLine("\n--- RAW AI RESPONSE ---");
+        Console.WriteLine(rawJson);
+        Console.WriteLine("-----------------------\n");
+
+        // 2. Clean up markdown
+        if (rawJson.StartsWith("```json")) rawJson = rawJson.Substring(7);
+        else if (rawJson.StartsWith("```")) rawJson = rawJson.Substring(3);
+        if (rawJson.EndsWith("```")) rawJson = rawJson.Substring(0, rawJson.Length - 3);
+        rawJson = rawJson.Trim();
+
+        // 3. Parse JSON
         var structuredResponse = JsonSerializer.Deserialize<object>(rawJson);
         return Results.Ok(structuredResponse);
     }
-    catch
+    catch (Exception ex)
     {
-        return Results.Problem("AI did not return valid JSON.", statusCode: 500);
+        // THIS IS THE LIFESAVER: It will print the exact crash reason to Terminal 1
+        Console.WriteLine("\n!!! SERVER CRASHED !!!");
+        Console.WriteLine("Reason: " + ex.Message);
+        return Results.Problem("Server crashed: " + ex.Message, statusCode: 500);
     }
 });
 
 app.Run();
 
-// Data model for the incoming request
 public class EmailRequest
 {
     public string EmailText { get; set; } = string.Empty;
