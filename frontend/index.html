@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Professionaliser</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Email Professionaliser</h1>
+        <p>Draft your email below. The AI will flag informal tone. Hover over highlighted words to fix them.</p>
+        
+        <!-- Upgraded to a rich-text editable div -->
+        <div id="emailInput" contenteditable="true" placeholder="Type your rough draft here..."></div>
+        <button id="analyzeBtn">Analyze Tone</button>
+
+        <!-- The floating box (hidden by default) -->
+        <div id="floatingTooltip" class="hidden"></div>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>
