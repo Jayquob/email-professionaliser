@@ -30,14 +30,29 @@ app.MapPost("/api/analyze", async ([FromBody] EmailRequest request) =>
             Return ONLY a JSON array of objects with keys: 'originalPhrase', 'suggestedPhrase', 'reason', and 'type'. 
             STRICT RULES FOR 'type':
             - For spelling/grammar mistakes, set 'type' strictly to 'typo'.
-            - For swear words, insults, or slang, set 'type' strictly to 'unprofessional'."
+            - For swear words, insults, or slang, set 'type' strictly to 'unprofessional'.
+            - For key smashing, remove and don't replace with text"
             : @"You are a communication expert. Analyze for subtle tone issues, passive-aggressiveness, and polish. Return ONLY a JSON array of objects with 'originalPhrase', 'suggestedPhrase', 'reason', and 'type' (set type to 'tone').";
-            
+
         var messages = new List<ChatMessage>
         {
-            new SystemChatMessage(systemPrompt),
-            new UserChatMessage(request.EmailText)
+            new SystemChatMessage(systemPrompt)
         };
+
+        // Replay the memory before processing the new text
+        if (request.History != null)
+        {
+            foreach (var pastMessage in request.History)
+            {
+                if (pastMessage.Role == "user")
+                    messages.Add(new UserChatMessage(pastMessage.Content));
+                else if (pastMessage.Role == "assistant")
+                    messages.Add(new AssistantChatMessage(pastMessage.Content));
+            }
+        }
+
+        // Add the current draft
+        messages.Add(new UserChatMessage(request.EmailText));
 
         var response = await aiClient.CompleteChatAsync(messages);
         var rawJson = response.Value.Content[0].Text.Trim();
@@ -62,5 +77,12 @@ app.Run();
 public class EmailRequest
 {
     public string EmailText { get; set; } = string.Empty;
-    public string Mode { get; set; } = "deep"; // Tells the backend which check to run
+    public string Mode { get; set; } = "deep"; 
+    public List<MessageLog> History { get; set; } = new();
+}
+
+public class MessageLog
+{
+    public string Role { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
 }

@@ -5,6 +5,7 @@ let currentSuggestions = [];
 let hoverTimeout;
 let activeSpan = null;
 let typingTimer;
+let conversationMemory = [];
 
 // Auto-check for obvious errors 1.5 seconds after the user stops typing
 emailInput.addEventListener('input', () => {
@@ -20,8 +21,13 @@ analyzeBtn.addEventListener('click', () => {
 });
 
 async function runAnalysis(mode) {
-    const text = emailInput.innerText;
-    if (!text.trim()) return;
+    // 1. Grab pure text for the AI to read
+    const textForAi = emailInput.innerText; 
+    
+    // 2. Grab the actual HTML (with line breaks) to preserve your formatting
+    const currentHtml = emailInput.innerHTML; 
+    
+    if (!textForAi.trim()) return;
     
     if (mode === 'deep') {
         analyzeBtn.innerText = "Analyzing...";
@@ -32,24 +38,30 @@ async function runAnalysis(mode) {
         const response = await fetch("http://localhost:5178/api/analyze", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ EmailText: text, Mode: mode })
+            body: JSON.stringify({ 
+                EmailText: textForAi, // Send the clean text to Groq
+                Mode: mode,
+                History: conversationMemory 
+            })
         });
 
         const newSuggestions = await response.json();
         
+        conversationMemory.push({ Role: "user", Content: textForAi });
+        conversationMemory.push({ Role: "assistant", Content: JSON.stringify(newSuggestions) });
+        
         if (newSuggestions.length > 0) {
-            let newHtml = text;
-            currentSuggestions = []; // Reset highlight tracking
+            let newHtml = currentHtml; // Start with your preserved layout!
+            currentSuggestions = []; 
             
             newSuggestions.forEach(item => {
                 const safePhrase = item.originalPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                // The regex still safely ignores the <br> tags thanks to (?![^<]*>)
                 const regex = new RegExp(`(${safePhrase})(?![^<]*>)`, 'gi');
                 
                 if (item.type === 'typo') {
-                    // Silently auto-correct spelling and grammar
                     newHtml = newHtml.replace(regex, item.suggestedPhrase);
                 } else {
-                    // Save for hover tooltip and highlight
                     const highlightIndex = currentSuggestions.length;
                     currentSuggestions.push(item);
                     newHtml = newHtml.replace(regex, `<span class="highlight" data-id="${highlightIndex}">$1</span>`);
@@ -111,20 +123,37 @@ function setupHoverEffects() {
 
             document.getElementById('acceptBtn').onclick = () => {
                 span.outerHTML = item.suggestedPhrase; 
+                
+                conversationMemory.push({ 
+                    Role: "user", 
+                    Content: `I accepted your suggestion to replace '${item.originalPhrase}' with '${item.suggestedPhrase}'.` 
+                });
+                
                 hideTooltip();
             };
             
             document.getElementById('rejectBtn').onclick = () => {
                 span.outerHTML = span.innerText; 
+                
+                conversationMemory.push({ 
+                    Role: "user", 
+                    Content: `I intentionally rejected your suggestion to change '${item.originalPhrase}'. Do not flag '${item.originalPhrase}' as an error again.` 
+                });
+                
                 hideTooltip();
             };
         });
 
+        // Increased from 300 to 600 milliseconds
         span.addEventListener('mouseleave', () => {
-            hoverTimeout = setTimeout(hideTooltip, 300);
+            hoverTimeout = setTimeout(hideTooltip, 600);
         });
     });
-    
-    floatingTooltip.addEventListener('mouseenter', () => clearTimeout(hoverTimeout));
-    floatingTooltip.addEventListener('mouseleave', hideTooltip);
 }
+
+// MOVED OUTSIDE THE FUNCTION: These now only run once when the page loads
+floatingTooltip.addEventListener('mouseenter', () => clearTimeout(hoverTimeout));
+floatingTooltip.addEventListener('mouseleave', () => {
+    // Add the same delay when leaving the tooltip itself
+    hoverTimeout = setTimeout(hideTooltip, 600);
+});
